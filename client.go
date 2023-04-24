@@ -141,15 +141,15 @@ func (c *Client) newStreamRequest(
 }
 
 func (c *Client) handleErrorResp(resp *http.Response) error {
-	var errRes ErrorResponse
+	var errRes APIError
 	err := json.NewDecoder(resp.Body).Decode(&errRes)
-	if err != nil || errRes.Error == nil {
-		reqErr := RequestError{
+	if err != nil {
+		errRes = APIError{
 			HTTPStatusCode: resp.StatusCode,
-			Err:            err,
+			Message:        err.Error(),
 		}
-		return fmt.Errorf("error, %w", &reqErr)
+		return &errRes
 	}
-	errRes.Error.HTTPStatusCode = resp.StatusCode
-	return fmt.Errorf("error, status code: %d, message: %w", resp.StatusCode, errRes.Error)
+	errRes.HTTPStatusCode = resp.StatusCode
+	return &errRes
 }
