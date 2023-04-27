@@ -142,14 +142,23 @@ func (c *Client) newStreamRequest(
 
 func (c *Client) handleErrorResp(resp *http.Response) error {
 	var errRes APIError
-	err := json.NewDecoder(resp.Body).Decode(&errRes)
+
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		errRes = APIError{
+		return &APIError{
 			HTTPStatusCode: resp.StatusCode,
 			Message:        err.Error(),
 		}
-		return &errRes
 	}
+
+	err = json.Unmarshal(body, &errRes)
+	if err != nil {
+		return &APIError{
+			HTTPStatusCode: resp.StatusCode,
+			Message:        fmt.Sprintf("failed to unmarshal response: %s, body: %s", err.Error(), body),
+		}
+	}
+
 	errRes.HTTPStatusCode = resp.StatusCode
 	return &errRes
 }
