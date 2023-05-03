@@ -141,7 +141,7 @@ func (c *Client) newStreamRequest(
 }
 
 func (c *Client) handleErrorResp(resp *http.Response) error {
-	var errRes APIError
+	var errRes ErrorResponse
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -159,6 +159,6 @@ func (c *Client) handleErrorResp(resp *http.Response) error {
 		}
 	}
 
-	errRes.HTTPStatusCode = resp.StatusCode
-	return &errRes
+	errRes.Error.HTTPStatusCode = resp.StatusCode
+	return errRes.Error
 }
