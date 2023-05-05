@@ -71,7 +71,11 @@ func (c *Client) sendRequestReturnHeader(req *http.Request, v any, header http.H
 
 	defer res.Body.Close()
 
-	header = res.Header
+	if header != nil {
+		for k, v := range res.Header {
+			header[k] = v
+		}
+	}
 
 	if res.StatusCode < http.StatusOK || res.StatusCode >= http.StatusBadRequest {
 		return c.handleErrorResp(res)
