@@ -47,7 +47,7 @@ func TestAPI(t *testing.T) {
 	_, err = c.CreateEmbeddings(ctx, embeddingReq)
 	checks.NoError(t, err, "Embedding error")
 
-	_, err = c.CreateChatCompletion(
+	_, _, err = c.CreateChatCompletion(
 		ctx,
 		ChatCompletionRequest{
 			Model: GPT3Dot5Turbo,
@@ -62,7 +62,7 @@ func TestAPI(t *testing.T) {
 
 	checks.NoError(t, err, "CreateChatCompletion (without name) returned error")
 
-	_, err = c.CreateChatCompletion(
+	_, _, err = c.CreateChatCompletion(
 		ctx,
 		ChatCompletionRequest{
 			Model: GPT3Dot5Turbo,
