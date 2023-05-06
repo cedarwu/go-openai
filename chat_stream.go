@@ -51,6 +51,11 @@ func (c *Client) CreateChatCompletionStream(
 		return
 	}
 
+	ctxUserAgent := ctx.Value(CtxUserAgent)
+	if ctxUserAgent != nil {
+		req.Header.Set("User-Agent", ctxUserAgent.(string))
+	}
+
 	resp, err := c.config.HTTPClient.Do(req) //nolint:bodyclose // body is closed in stream.Close()
 	if err != nil {
 		return
