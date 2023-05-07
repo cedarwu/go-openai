@@ -73,7 +73,7 @@ func (c *Client) sendRequestReturnHeader(req *http.Request, v any, header http.H
 
 	if header != nil {
 		for k, v := range res.Header {
-			header[k] = v
+			header[k] = v[:]
 		}
 	}
 

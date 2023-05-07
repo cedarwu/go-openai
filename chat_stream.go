@@ -38,7 +38,7 @@ type ChatCompletionStream struct {
 func (c *Client) CreateChatCompletionStream(
 	ctx context.Context,
 	request ChatCompletionRequest,
-) (stream *ChatCompletionStream, err error) {
+) (stream *ChatCompletionStream, header http.Header, err error) {
 	urlSuffix := "/chat/completions"
 	if !checkEndpointSupportsModel(urlSuffix, request.Model) {
 		err = ErrChatCompletionInvalidModel
@@ -60,8 +60,15 @@ func (c *Client) CreateChatCompletionStream(
 	if err != nil {
 		return
 	}
+
+	header = make(http.Header)
+	for k, v := range resp.Header {
+		header[k] = v[:]
+	}
+
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
-		return nil, c.handleErrorResp(resp)
+		err = c.handleErrorResp(resp)
+		return
 	}
 
 	stream = &ChatCompletionStream{
