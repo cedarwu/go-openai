@@ -87,7 +87,6 @@ func (c *Client) CreateChatCompletion(
 		req.Header.Set("User-Agent", ctxUserAgent.(string))
 	}
 
-	header = make(http.Header)
-	err = c.sendRequestReturnHeader(req, &response, header)
+	header, err = c.sendRequestReturnHeader(req, &response)
 	return
 }
