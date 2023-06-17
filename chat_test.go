@@ -1,9 +1,8 @@
 package openai_test
 
 import (
-	. "github.com/cedarwu/go-openai"
-	"github.com/cedarwu/go-openai/internal/test"
-	"github.com/cedarwu/go-openai/internal/test/checks"
+	. "github.com/sashabaranov/go-openai"
+	"github.com/sashabaranov/go-openai/internal/test/checks"
 
 	"context"
 	"encoding/json"
@@ -32,7 +31,7 @@ func TestChatCompletionsWrongModel(t *testing.T) {
 			},
 		},
 	}
-	_, _, err := client.CreateChatCompletion(ctx, req)
+	_, err := client.CreateChatCompletion(ctx, req)
 	msg := fmt.Sprintf("CreateChatCompletion should return wrong model error, returned: %s", err)
 	checks.ErrorIs(t, err, ErrChatCompletionInvalidModel, msg)
 }
@@ -46,26 +45,16 @@ func TestChatCompletionsWithStream(t *testing.T) {
 	req := ChatCompletionRequest{
 		Stream: true,
 	}
-	_, _, err := client.CreateChatCompletion(ctx, req)
+	_, err := client.CreateChatCompletion(ctx, req)
 	checks.ErrorIs(t, err, ErrChatCompletionStreamNotSupported, "unexpected error")
 }
 
 // TestCompletions Tests the completions endpoint of the API using the mocked server.
 func TestChatCompletions(t *testing.T) {
-	server := test.NewTestServer()
+	client, server, teardown := setupOpenAITestServer()
+	defer teardown()
 	server.RegisterHandler("/v1/chat/completions", handleChatCompletionEndpoint)
-	// create the test server
-	var err error
-	ts := server.OpenAITestServer()
-	ts.Start()
-	defer ts.Close()
-
-	config := DefaultConfig(test.GetTestToken())
-	config.BaseURL = ts.URL + "/v1"
-	client := NewClientWithConfig(config)
-	ctx := context.Background()
-
-	req := ChatCompletionRequest{
+	_, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{
 		MaxTokens: 5,
 		Model:     GPT3Dot5Turbo,
 		Messages: []ChatCompletionMessage{
@@ -74,9 +63,26 @@ func TestChatCompletions(t *testing.T) {
 				Content: "Hello!",
 			},
 		},
-	}
-	_, _, err = client.CreateChatCompletion(ctx, req)
+	})
 	checks.NoError(t, err, "CreateChatCompletion error")
+}
+
+func TestAzureChatCompletions(t *testing.T) {
+	client, server, teardown := setupAzureTestServer()
+	defer teardown()
+	server.RegisterHandler("/openai/deployments/*", handleChatCompletionEndpoint)
+
+	_, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{
+		MaxTokens: 5,
+		Model:     GPT3Dot5Turbo,
+		Messages: []ChatCompletionMessage{
+			{
+				Role:    ChatMessageRoleUser,
+				Content: "Hello!",
+			},
+		},
+	})
+	checks.NoError(t, err, "CreateAzureChatCompletion error")
 }
 
 // handleChatCompletionEndpoint Handles the ChatGPT completion endpoint by the test server.

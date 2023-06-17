@@ -3,7 +3,8 @@ package openai
 import (
 	"bufio"
 	"context"
-	"net/http"
+
+	utils "github.com/sashabaranov/go-openai/internal"
 )
 
 type ChatCompletionStreamChoiceDelta struct {
@@ -14,7 +15,7 @@ type ChatCompletionStreamChoiceDelta struct {
 type ChatCompletionStreamChoice struct {
 	Index        int                             `json:"index"`
 	Delta        ChatCompletionStreamChoiceDelta `json:"delta"`
-	FinishReason string                          `json:"finish_reason"`
+	FinishReason FinishReason                    `json:"finish_reason"`
 }
 
 type ChatCompletionStreamResponse struct {
@@ -38,37 +39,25 @@ type ChatCompletionStream struct {
 func (c *Client) CreateChatCompletionStream(
 	ctx context.Context,
 	request ChatCompletionRequest,
-) (stream *ChatCompletionStream, header http.Header, err error) {
-	urlSuffix := "/chat/completions"
+) (stream *ChatCompletionStream, err error) {
+	urlSuffix := chatCompletionsSuffix
 	if !checkEndpointSupportsModel(urlSuffix, request.Model) {
 		err = ErrChatCompletionInvalidModel
 		return
 	}
 
 	request.Stream = true
-	req, err := c.newStreamRequest(ctx, "POST", urlSuffix, request)
+	req, err := c.newStreamRequest(ctx, "POST", urlSuffix, request, request.Model)
 	if err != nil {
 		return
-	}
-
-	ctxUserAgent := ctx.Value(CtxUserAgent)
-	if ctxUserAgent != nil {
-		req.Header.Set("User-Agent", ctxUserAgent.(string))
 	}
 
 	resp, err := c.config.HTTPClient.Do(req) //nolint:bodyclose // body is closed in stream.Close()
 	if err != nil {
 		return
 	}
-
-	header = make(http.Header)
-	for k, v := range resp.Header {
-		header[k] = v[:]
-	}
-
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusBadRequest {
-		err = c.handleErrorResp(resp)
-		return
+	if isFailureStatusCode(resp) {
+		return nil, c.handleErrorResp(resp)
 	}
 
 	stream = &ChatCompletionStream{
@@ -76,8 +65,8 @@ func (c *Client) CreateChatCompletionStream(
 			emptyMessagesLimit: c.config.EmptyMessagesLimit,
 			reader:             bufio.NewReader(resp.Body),
 			response:           resp,
-			errAccumulator:     newErrorAccumulator(),
-			unmarshaler:        &jsonUnmarshaler{},
+			errAccumulator:     utils.NewErrorAccumulator(),
+			unmarshaler:        &utils.JSONUnmarshaler{},
 		},
 	}
 	return

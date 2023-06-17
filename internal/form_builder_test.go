@@ -1,8 +1,8 @@
 package openai //nolint:testpackage // testing private field
 
 import (
-	"github.com/cedarwu/go-openai/internal/test"
-	"github.com/cedarwu/go-openai/internal/test/checks"
+	"github.com/sashabaranov/go-openai/internal/test"
+	"github.com/sashabaranov/go-openai/internal/test/checks"
 
 	"bytes"
 	"errors"
@@ -30,8 +30,8 @@ func TestFormBuilderWithFailingWriter(t *testing.T) {
 	defer file.Close()
 	defer os.Remove(file.Name())
 
-	builder := newFormBuilder(&failingWriter{})
-	err = builder.createFormFile("file", file)
+	builder := NewFormBuilder(&failingWriter{})
+	err = builder.CreateFormFile("file", file)
 	checks.ErrorIs(t, err, errMockFailingWriterError, "formbuilder should return error if writer fails")
 }
 
@@ -47,8 +47,8 @@ func TestFormBuilderWithClosedFile(t *testing.T) {
 	defer os.Remove(file.Name())
 
 	body := &bytes.Buffer{}
-	builder := newFormBuilder(body)
-	err = builder.createFormFile("file", file)
+	builder := NewFormBuilder(body)
+	err = builder.CreateFormFile("file", file)
 	checks.HasError(t, err, "formbuilder should return error if file is closed")
 	checks.ErrorIs(t, err, os.ErrClosed, "formbuilder should return error if file is closed")
 }

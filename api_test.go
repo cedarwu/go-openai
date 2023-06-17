@@ -6,12 +6,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"testing"
 
-	. "github.com/cedarwu/go-openai"
-	"github.com/cedarwu/go-openai/internal/test/checks"
+	. "github.com/sashabaranov/go-openai"
+	"github.com/sashabaranov/go-openai/internal/test/checks"
 )
 
 func TestAPI(t *testing.T) {
@@ -47,7 +46,7 @@ func TestAPI(t *testing.T) {
 	_, err = c.CreateEmbeddings(ctx, embeddingReq)
 	checks.NoError(t, err, "Embedding error")
 
-	_, _, err = c.CreateChatCompletion(
+	_, err = c.CreateChatCompletion(
 		ctx,
 		ChatCompletionRequest{
 			Model: GPT3Dot5Turbo,
@@ -62,7 +61,7 @@ func TestAPI(t *testing.T) {
 
 	checks.NoError(t, err, "CreateChatCompletion (without name) returned error")
 
-	_, _, err = c.CreateChatCompletion(
+	_, err = c.CreateChatCompletion(
 		ctx,
 		ChatCompletionRequest{
 			Model: GPT3Dot5Turbo,
@@ -226,18 +225,13 @@ func TestAPIErrorUnmarshalJSONInvalidMessage(t *testing.T) {
 }
 
 func TestRequestError(t *testing.T) {
-	var err error
-
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	client, server, teardown := setupOpenAITestServer()
+	defer teardown()
+	server.RegisterHandler("/v1/engines", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusTeapot)
-	}))
-	defer ts.Close()
+	})
 
-	config := DefaultConfig("dummy")
-	config.BaseURL = ts.URL
-	c := NewClientWithConfig(config)
-	ctx := context.Background()
-	_, err = c.ListEngines(ctx)
+	_, err := client.ListEngines(context.Background())
 	checks.HasError(t, err, "ListEngines did not fail")
 
 	var reqErr *RequestError
