@@ -133,10 +133,10 @@ type ChatCompletionResponse struct {
 }
 
 // CreateChatCompletion — API call to Create a completion for the chat message.
-func (c *Client) CreateChatCompletion(
+func (c *Client) CreateChatCompletionReturnHeader(
 	ctx context.Context,
 	request ChatCompletionRequest,
-) (response ChatCompletionResponse, err error) {
+) (response ChatCompletionResponse, header http.Header, err error) {
 	if request.Stream {
 		err = ErrChatCompletionStreamNotSupported
 		return
@@ -154,5 +154,13 @@ func (c *Client) CreateChatCompletion(
 	}
 
 	err = c.sendRequest(req, &response)
+	return
+}
+
+func (c *Client) CreateChatCompletion(
+	ctx context.Context,
+	request ChatCompletionRequest,
+) (response ChatCompletionResponse, err error) {
+	response, _, err = c.CreateChatCompletionReturnHeader(ctx, request)
 	return
 }

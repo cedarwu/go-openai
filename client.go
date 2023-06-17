@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strings"
 
-	utils "github.com/sashabaranov/go-openai/internal"
+	utils "github.com/cedarwu/go-openai/internal"
 )
 
 // Client is OpenAI GPT-3 API client.
@@ -45,7 +45,7 @@ func NewOrgClient(authToken, org string) *Client {
 	return NewClientWithConfig(config)
 }
 
-func (c *Client) sendRequest(req *http.Request, v any) error {
+func (c *Client) sendRequestReturnHeader(req *http.Request, v any) (http.Header, error) {
 	req.Header.Set("Accept", "application/json; charset=utf-8")
 
 	// Check whether Content-Type is already set, Upload Files API requires
@@ -59,16 +59,21 @@ func (c *Client) sendRequest(req *http.Request, v any) error {
 
 	res, err := c.config.HTTPClient.Do(req)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	defer res.Body.Close()
 
 	if isFailureStatusCode(res) {
-		return c.handleErrorResp(res)
+		return res.Header, c.handleErrorResp(res)
 	}
 
-	return decodeResponse(res.Body, v)
+	return res.Header, decodeResponse(res.Body, v)
+}
+
+func (c *Client) sendRequest(req *http.Request, v any) error {
+	_, err := c.sendRequestReturnHeader(req, v)
+	return err
 }
 
 func (c *Client) setCommonHeaders(req *http.Request) {
@@ -159,17 +164,27 @@ func (c *Client) newStreamRequest(
 }
 
 func (c *Client) handleErrorResp(resp *http.Response) error {
-	var errRes ErrorResponse
-	err := json.NewDecoder(resp.Body).Decode(&errRes)
-	if err != nil || errRes.Error == nil {
-		reqErr := &RequestError{
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &RequestError{
 			HTTPStatusCode: resp.StatusCode,
 			Err:            err,
 		}
-		if errRes.Error != nil {
-			reqErr.Err = errRes.Error
+	}
+
+	var errRes ErrorResponse
+	err = json.Unmarshal(body, &errRes)
+	if err != nil {
+		return &RequestError{
+			HTTPStatusCode: resp.StatusCode,
+			Err:            fmt.Errorf("decode body as json err: %v, body: %s", err, body),
 		}
-		return reqErr
+	}
+	if errRes.Error == nil {
+		return &RequestError{
+			HTTPStatusCode: resp.StatusCode,
+			Err:            fmt.Errorf("no error data in response body: %s", body),
+		}
 	}
 
 	errRes.Error.HTTPStatusCode = resp.StatusCode

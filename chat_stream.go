@@ -3,8 +3,9 @@ package openai
 import (
 	"bufio"
 	"context"
+	"net/http"
 
-	utils "github.com/sashabaranov/go-openai/internal"
+	utils "github.com/cedarwu/go-openai/internal"
 )
 
 type ChatCompletionStreamChoiceDelta struct {
@@ -36,10 +37,10 @@ type ChatCompletionStream struct {
 // support. It sets whether to stream back partial progress. If set, tokens will be
 // sent as data-only server-sent events as they become available, with the
 // stream terminated by a data: [DONE] message.
-func (c *Client) CreateChatCompletionStream(
+func (c *Client) CreateChatCompletionStreamReturnHeader(
 	ctx context.Context,
 	request ChatCompletionRequest,
-) (stream *ChatCompletionStream, err error) {
+) (stream *ChatCompletionStream, header http.Header, err error) {
 	urlSuffix := chatCompletionsSuffix
 	if !checkEndpointSupportsModel(urlSuffix, request.Model) {
 		err = ErrChatCompletionInvalidModel
@@ -56,8 +57,14 @@ func (c *Client) CreateChatCompletionStream(
 	if err != nil {
 		return
 	}
+
+	header = make(http.Header)
+	for k, v := range resp.Header {
+		header[k] = v[:]
+	}
+
 	if isFailureStatusCode(resp) {
-		return nil, c.handleErrorResp(resp)
+		return nil, header, c.handleErrorResp(resp)
 	}
 
 	stream = &ChatCompletionStream{
@@ -69,5 +76,13 @@ func (c *Client) CreateChatCompletionStream(
 			unmarshaler:        &utils.JSONUnmarshaler{},
 		},
 	}
+	return
+}
+
+func (c *Client) CreateChatCompletionStream(
+	ctx context.Context,
+	request ChatCompletionRequest,
+) (stream *ChatCompletionStream, err error) {
+	stream, _, err = c.CreateChatCompletionStreamReturnHeader(ctx, request)
 	return
 }
