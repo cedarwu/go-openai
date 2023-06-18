@@ -68,7 +68,7 @@ type FunctionDefine struct {
 type FunctionParams struct {
 	// the Type must be JSONSchemaTypeObject
 	Type       JSONSchemaType               `json:"type"`
-	Properties map[string]*JSONSchemaDefine `json:"properties,omitempty"`
+	Properties map[string]*JSONSchemaDefine `json:"properties"`
 	Required   []string                     `json:"required,omitempty"`
 }
 
