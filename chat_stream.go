@@ -1,30 +1,31 @@
 package openai
 
 import (
-	"bufio"
 	"context"
 	"net/http"
-
-	utils "github.com/cedarwu/go-openai/internal"
 )
 
 type ChatCompletionStreamChoiceDelta struct {
-	Content string `json:"content,omitempty"`
-	Role    string `json:"role,omitempty"`
+	Content      string        `json:"content,omitempty"`
+	Role         string        `json:"role,omitempty"`
+	FunctionCall *FunctionCall `json:"function_call,omitempty"`
+	ToolCalls    []ToolCall    `json:"tool_calls,omitempty"`
 }
 
 type ChatCompletionStreamChoice struct {
-	Index        int                             `json:"index"`
-	Delta        ChatCompletionStreamChoiceDelta `json:"delta"`
-	FinishReason FinishReason                    `json:"finish_reason"`
+	Index                int                             `json:"index"`
+	Delta                ChatCompletionStreamChoiceDelta `json:"delta"`
+	FinishReason         FinishReason                    `json:"finish_reason"`
+	ContentFilterResults ContentFilterResults            `json:"content_filter_results,omitempty"`
 }
 
 type ChatCompletionStreamResponse struct {
-	ID      string                       `json:"id"`
-	Object  string                       `json:"object"`
-	Created int64                        `json:"created"`
-	Model   string                       `json:"model"`
-	Choices []ChatCompletionStreamChoice `json:"choices"`
+	ID                string                       `json:"id"`
+	Object            string                       `json:"object"`
+	Created           int64                        `json:"created"`
+	Model             string                       `json:"model"`
+	Choices           []ChatCompletionStreamChoice `json:"choices"`
+	PromptAnnotations []PromptAnnotation           `json:"prompt_annotations,omitempty"`
 }
 
 // ChatCompletionStream
@@ -37,6 +38,32 @@ type ChatCompletionStream struct {
 // support. It sets whether to stream back partial progress. If set, tokens will be
 // sent as data-only server-sent events as they become available, with the
 // stream terminated by a data: [DONE] message.
+func (c *Client) CreateChatCompletionStream(
+	ctx context.Context,
+	request ChatCompletionRequest,
+) (stream *ChatCompletionStream, err error) {
+	urlSuffix := chatCompletionsSuffix
+	if !checkEndpointSupportsModel(urlSuffix, request.Model) {
+		err = ErrChatCompletionInvalidModel
+		return
+	}
+
+	request.Stream = true
+	req, err := c.newRequest(ctx, http.MethodPost, c.fullURL(urlSuffix, request.Model), withBody(request))
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := sendRequestStream[ChatCompletionStreamResponse](c, req)
+	if err != nil {
+		return
+	}
+	stream = &ChatCompletionStream{
+		streamReader: resp,
+	}
+	return
+}
+
 func (c *Client) CreateChatCompletionStreamReturnHeader(
 	ctx context.Context,
 	request ChatCompletionRequest,
@@ -48,41 +75,17 @@ func (c *Client) CreateChatCompletionStreamReturnHeader(
 	}
 
 	request.Stream = true
-	req, err := c.newStreamRequest(ctx, "POST", urlSuffix, request, request.Model)
+	req, err := c.newRequest(ctx, http.MethodPost, c.fullURL(urlSuffix, request.Model), withBody(request))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	resp, header, err := sendRequestStreamReturnHeader[ChatCompletionStreamResponse](c, req)
 	if err != nil {
 		return
 	}
-
-	resp, err := c.config.HTTPClient.Do(req) //nolint:bodyclose // body is closed in stream.Close()
-	if err != nil {
-		return
-	}
-
-	header = make(http.Header)
-	for k, v := range resp.Header {
-		header[k] = v[:]
-	}
-
-	if isFailureStatusCode(resp) {
-		return nil, header, c.handleErrorResp(resp)
-	}
-
 	stream = &ChatCompletionStream{
-		streamReader: &streamReader[ChatCompletionStreamResponse]{
-			emptyMessagesLimit: c.config.EmptyMessagesLimit,
-			reader:             bufio.NewReader(resp.Body),
-			response:           resp,
-			errAccumulator:     utils.NewErrorAccumulator(),
-			unmarshaler:        &utils.JSONUnmarshaler{},
-		},
+		streamReader: resp,
 	}
-	return
-}
-
-func (c *Client) CreateChatCompletionStream(
-	ctx context.Context,
-	request ChatCompletionRequest,
-) (stream *ChatCompletionStream, err error) {
-	stream, _, err = c.CreateChatCompletionStreamReturnHeader(ctx, request)
 	return
 }

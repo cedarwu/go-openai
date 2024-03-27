@@ -7,16 +7,18 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/cedarwu/go-openai/internal/test"
+	"github.com/cedarwu/go-openai/internal/test/checks"
 )
 
 var errTestRequestBuilderFailed = errors.New("test request builder failed")
 
 type failingRequestBuilder struct{}
 
-func (*failingRequestBuilder) Build(_ context.Context, _, _ string, _ any) (*http.Request, error) {
+func (*failingRequestBuilder) Build(_ context.Context, _, _ string, _ any, _ http.Header) (*http.Request, error) {
 	return nil, errTestRequestBuilderFailed
 }
 
@@ -41,35 +43,80 @@ func TestDecodeResponse(t *testing.T) {
 	stringInput := ""
 
 	testCases := []struct {
-		name  string
-		value interface{}
-		body  io.Reader
+		name     string
+		value    interface{}
+		expected interface{}
+		body     io.Reader
+		hasError bool
 	}{
 		{
-			name:  "nil input",
-			value: nil,
-			body:  bytes.NewReader([]byte("")),
+			name:     "nil input",
+			value:    nil,
+			body:     bytes.NewReader([]byte("")),
+			expected: nil,
 		},
 		{
-			name:  "string input",
-			value: &stringInput,
-			body:  bytes.NewReader([]byte("test")),
+			name:     "string input",
+			value:    &stringInput,
+			body:     bytes.NewReader([]byte("test")),
+			expected: "test",
 		},
 		{
 			name:  "map input",
 			value: &map[string]interface{}{},
 			body:  bytes.NewReader([]byte(`{"test": "test"}`)),
+			expected: map[string]interface{}{
+				"test": "test",
+			},
 		},
+		{
+			name:     "reader return error",
+			value:    &stringInput,
+			body:     &errorReader{err: errors.New("dummy")},
+			hasError: true,
+		},
+		{
+			name:  "audio text input",
+			value: &audioTextResponse{},
+			body:  bytes.NewReader([]byte("test")),
+			expected: audioTextResponse{
+				Text: "test",
+			},
+		},
+	}
+
+	assertEqual := func(t *testing.T, expected, actual interface{}) {
+		t.Helper()
+		if expected == actual {
+			return
+		}
+		v := reflect.ValueOf(actual).Elem().Interface()
+		if !reflect.DeepEqual(v, expected) {
+			t.Fatalf("Unexpected value: %v, expected: %v", v, expected)
+		}
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			err := decodeResponse(tc.body, tc.value)
-			if err != nil {
-				t.Errorf("Unexpected error: %v", err)
+			if tc.hasError {
+				checks.HasError(t, err, "Unexpected nil error")
+				return
 			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			assertEqual(t, tc.expected, tc.value)
 		})
 	}
+}
+
+type errorReader struct {
+	err error
+}
+
+func (e *errorReader) Read(_ []byte) (n int, err error) {
+	return 0, e.err
 }
 
 func TestHandleErrorResp(t *testing.T) {
@@ -208,6 +255,18 @@ func TestClientReturnsRequestBuilderErrors(t *testing.T) {
 		{"ListFineTuneEvents", func() (any, error) {
 			return client.ListFineTuneEvents(ctx, "")
 		}},
+		{"CreateFineTuningJob", func() (any, error) {
+			return client.CreateFineTuningJob(ctx, FineTuningJobRequest{})
+		}},
+		{"CancelFineTuningJob", func() (any, error) {
+			return client.CancelFineTuningJob(ctx, "")
+		}},
+		{"RetrieveFineTuningJob", func() (any, error) {
+			return client.RetrieveFineTuningJob(ctx, "")
+		}},
+		{"ListFineTuningJobEvents", func() (any, error) {
+			return client.ListFineTuningJobEvents(ctx, "")
+		}},
 		{"Moderations", func() (any, error) {
 			return client.Moderations(ctx, ModerationRequest{})
 		}},
@@ -219,6 +278,9 @@ func TestClientReturnsRequestBuilderErrors(t *testing.T) {
 		}},
 		{"CreateImage", func() (any, error) {
 			return client.CreateImage(ctx, ImageRequest{})
+		}},
+		{"CreateFileBytes", func() (any, error) {
+			return client.CreateFileBytes(ctx, FileBytesRequest{})
 		}},
 		{"DeleteFile", func() (any, error) {
 			return nil, client.DeleteFile(ctx, "")
@@ -243,6 +305,96 @@ func TestClientReturnsRequestBuilderErrors(t *testing.T) {
 		}},
 		{"GetModel", func() (any, error) {
 			return client.GetModel(ctx, "text-davinci-003")
+		}},
+		{"DeleteFineTuneModel", func() (any, error) {
+			return client.DeleteFineTuneModel(ctx, "")
+		}},
+		{"CreateAssistant", func() (any, error) {
+			return client.CreateAssistant(ctx, AssistantRequest{})
+		}},
+		{"RetrieveAssistant", func() (any, error) {
+			return client.RetrieveAssistant(ctx, "")
+		}},
+		{"ModifyAssistant", func() (any, error) {
+			return client.ModifyAssistant(ctx, "", AssistantRequest{})
+		}},
+		{"DeleteAssistant", func() (any, error) {
+			return client.DeleteAssistant(ctx, "")
+		}},
+		{"ListAssistants", func() (any, error) {
+			return client.ListAssistants(ctx, nil, nil, nil, nil)
+		}},
+		{"CreateAssistantFile", func() (any, error) {
+			return client.CreateAssistantFile(ctx, "", AssistantFileRequest{})
+		}},
+		{"ListAssistantFiles", func() (any, error) {
+			return client.ListAssistantFiles(ctx, "", nil, nil, nil, nil)
+		}},
+		{"RetrieveAssistantFile", func() (any, error) {
+			return client.RetrieveAssistantFile(ctx, "", "")
+		}},
+		{"DeleteAssistantFile", func() (any, error) {
+			return nil, client.DeleteAssistantFile(ctx, "", "")
+		}},
+		{"CreateMessage", func() (any, error) {
+			return client.CreateMessage(ctx, "", MessageRequest{})
+		}},
+		{"ListMessage", func() (any, error) {
+			return client.ListMessage(ctx, "", nil, nil, nil, nil)
+		}},
+		{"RetrieveMessage", func() (any, error) {
+			return client.RetrieveMessage(ctx, "", "")
+		}},
+		{"ModifyMessage", func() (any, error) {
+			return client.ModifyMessage(ctx, "", "", nil)
+		}},
+		{"RetrieveMessageFile", func() (any, error) {
+			return client.RetrieveMessageFile(ctx, "", "", "")
+		}},
+		{"ListMessageFiles", func() (any, error) {
+			return client.ListMessageFiles(ctx, "", "")
+		}},
+		{"CreateThread", func() (any, error) {
+			return client.CreateThread(ctx, ThreadRequest{})
+		}},
+		{"RetrieveThread", func() (any, error) {
+			return client.RetrieveThread(ctx, "")
+		}},
+		{"ModifyThread", func() (any, error) {
+			return client.ModifyThread(ctx, "", ModifyThreadRequest{})
+		}},
+		{"DeleteThread", func() (any, error) {
+			return client.DeleteThread(ctx, "")
+		}},
+		{"CreateRun", func() (any, error) {
+			return client.CreateRun(ctx, "", RunRequest{})
+		}},
+		{"RetrieveRun", func() (any, error) {
+			return client.RetrieveRun(ctx, "", "")
+		}},
+		{"ModifyRun", func() (any, error) {
+			return client.ModifyRun(ctx, "", "", RunModifyRequest{})
+		}},
+		{"ListRuns", func() (any, error) {
+			return client.ListRuns(ctx, "", Pagination{})
+		}},
+		{"SubmitToolOutputs", func() (any, error) {
+			return client.SubmitToolOutputs(ctx, "", "", SubmitToolOutputsRequest{})
+		}},
+		{"CancelRun", func() (any, error) {
+			return client.CancelRun(ctx, "", "")
+		}},
+		{"CreateThreadAndRun", func() (any, error) {
+			return client.CreateThreadAndRun(ctx, CreateThreadAndRunRequest{})
+		}},
+		{"RetrieveRunStep", func() (any, error) {
+			return client.RetrieveRunStep(ctx, "", "", "")
+		}},
+		{"ListRunSteps", func() (any, error) {
+			return client.ListRunSteps(ctx, "", "", Pagination{})
+		}},
+		{"CreateSpeech", func() (any, error) {
+			return client.CreateSpeech(ctx, CreateSpeechRequest{Model: TTSModel1, Voice: VoiceAlloy})
 		}},
 	}
 

@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,24 @@ type Client struct {
 
 	requestBuilder    utils.RequestBuilder
 	createFormBuilder func(io.Writer) utils.FormBuilder
+}
+
+type Response interface {
+	SetHeader(http.Header)
+}
+
+type httpHeader http.Header
+
+func (h *httpHeader) SetHeader(header http.Header) {
+	*h = httpHeader(header)
+}
+
+func (h *httpHeader) Header() http.Header {
+	return http.Header(*h)
+}
+
+func (h *httpHeader) GetRateLimitHeaders() RateLimitHeaders {
+	return newRateLimitHeaders(h.Header())
 }
 
 // NewClient creates new OpenAI API client.
@@ -45,17 +64,85 @@ func NewOrgClient(authToken, org string) *Client {
 	return NewClientWithConfig(config)
 }
 
-func (c *Client) sendRequestReturnHeader(req *http.Request, v any) (http.Header, error) {
-	req.Header.Set("Accept", "application/json; charset=utf-8")
+type requestOptions struct {
+	body   any
+	header http.Header
+}
+
+type requestOption func(*requestOptions)
+
+func withBody(body any) requestOption {
+	return func(args *requestOptions) {
+		args.body = body
+	}
+}
+
+func withContentType(contentType string) requestOption {
+	return func(args *requestOptions) {
+		args.header.Set("Content-Type", contentType)
+	}
+}
+
+func withBetaAssistantV1() requestOption {
+	return func(args *requestOptions) {
+		args.header.Set("OpenAI-Beta", "assistants=v1")
+	}
+}
+
+func (c *Client) newRequest(ctx context.Context, method, url string, setters ...requestOption) (*http.Request, error) {
+	// Default Options
+	args := &requestOptions{
+		body:   nil,
+		header: make(http.Header),
+	}
+	for _, setter := range setters {
+		setter(args)
+	}
+	req, err := c.requestBuilder.Build(ctx, method, url, args.body, args.header)
+	if err != nil {
+		return nil, err
+	}
+	c.setCommonHeaders(req)
+	return req, nil
+}
+
+func (c *Client) sendRequest(req *http.Request, v Response) error {
+	req.Header.Set("Accept", "application/json")
 
 	// Check whether Content-Type is already set, Upload Files API requires
 	// Content-Type == multipart/form-data
 	contentType := req.Header.Get("Content-Type")
 	if contentType == "" {
-		req.Header.Set("Content-Type", "application/json; charset=utf-8")
+		req.Header.Set("Content-Type", "application/json")
 	}
 
-	c.setCommonHeaders(req)
+	res, err := c.config.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer res.Body.Close()
+
+	if isFailureStatusCode(res) {
+		return c.handleErrorResp(res)
+	}
+
+	if v != nil {
+		v.SetHeader(res.Header)
+	}
+
+	return decodeResponse(res.Body, v)
+}
+
+func (c *Client) sendRequestReturnHeader(req *http.Request, v Response) (http.Header, error) {
+	req.Header.Set("Accept", "application/json")
+
+	// Check whether Content-Type is already set, Upload Files API requires
+	// Content-Type == multipart/form-data
+	contentType := req.Header.Get("Content-Type")
+	if contentType == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	res, err := c.config.HTTPClient.Do(req)
 	if err != nil {
@@ -68,12 +155,76 @@ func (c *Client) sendRequestReturnHeader(req *http.Request, v any) (http.Header,
 		return res.Header, c.handleErrorResp(res)
 	}
 
+	if v != nil {
+		v.SetHeader(res.Header)
+	}
+
 	return res.Header, decodeResponse(res.Body, v)
 }
 
-func (c *Client) sendRequest(req *http.Request, v any) error {
-	_, err := c.sendRequestReturnHeader(req, v)
-	return err
+func (c *Client) sendRequestRaw(req *http.Request) (body io.ReadCloser, err error) {
+	resp, err := c.config.HTTPClient.Do(req)
+	if err != nil {
+		return
+	}
+
+	if isFailureStatusCode(resp) {
+		err = c.handleErrorResp(resp)
+		return
+	}
+	return resp.Body, nil
+}
+
+func sendRequestStream[T streamable](client *Client, req *http.Request) (*streamReader[T], error) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Connection", "keep-alive")
+
+	resp, err := client.config.HTTPClient.Do(req) //nolint:bodyclose // body is closed in stream.Close()
+	if err != nil {
+		return new(streamReader[T]), err
+	}
+	if isFailureStatusCode(resp) {
+		return new(streamReader[T]), client.handleErrorResp(resp)
+	}
+	return &streamReader[T]{
+		emptyMessagesLimit: client.config.EmptyMessagesLimit,
+		reader:             bufio.NewReader(resp.Body),
+		response:           resp,
+		errAccumulator:     utils.NewErrorAccumulator(),
+		unmarshaler:        &utils.JSONUnmarshaler{},
+		httpHeader:         httpHeader(resp.Header),
+	}, nil
+}
+
+func sendRequestStreamReturnHeader[T streamable](client *Client, req *http.Request) (*streamReader[T], http.Header, error) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+	req.Header.Set("Connection", "keep-alive")
+
+	resp, err := client.config.HTTPClient.Do(req) //nolint:bodyclose // body is closed in stream.Close()
+	if err != nil {
+		return new(streamReader[T]), nil, err
+	}
+
+	header := make(http.Header)
+	for k, v := range resp.Header {
+		header[k] = v[:]
+	}
+
+	if isFailureStatusCode(resp) {
+		return new(streamReader[T]), header, client.handleErrorResp(resp)
+	}
+	return &streamReader[T]{
+		emptyMessagesLimit: client.config.EmptyMessagesLimit,
+		reader:             bufio.NewReader(resp.Body),
+		response:           resp,
+		errAccumulator:     utils.NewErrorAccumulator(),
+		unmarshaler:        &utils.JSONUnmarshaler{},
+		httpHeader:         httpHeader(resp.Header),
+	}, header, nil
 }
 
 func (c *Client) setCommonHeaders(req *http.Request) {
@@ -81,7 +232,7 @@ func (c *Client) setCommonHeaders(req *http.Request) {
 	// Azure API Key authentication
 	if c.config.APIType == APITypeAzure {
 		req.Header.Set(AzureAPIKeyHeader, c.config.authToken)
-	} else {
+	} else if c.config.authToken != "" {
 		// OpenAI or Azure AD authentication
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", c.config.authToken))
 	}
@@ -99,10 +250,14 @@ func decodeResponse(body io.Reader, v any) error {
 		return nil
 	}
 
-	if result, ok := v.(*string); ok {
-		return decodeString(body, result)
+	switch o := v.(type) {
+	case *string:
+		return decodeString(body, o)
+	case *audioTextResponse:
+		return decodeString(body, &o.Text)
+	default:
+		return json.NewDecoder(body).Decode(v)
 	}
-	return json.NewDecoder(body).Decode(v)
 }
 
 func decodeString(body io.Reader, output *string) error {
@@ -123,7 +278,7 @@ func (c *Client) fullURL(suffix string, args ...any) string {
 		baseURL = strings.TrimRight(baseURL, "/")
 		// if suffix is /models change to {endpoint}/openai/models?api-version=2022-12-01
 		// https://learn.microsoft.com/en-us/rest/api/cognitiveservices/azureopenaistable/models/list?tabs=HTTP
-		if strings.Contains(suffix, "/models") {
+		if containsSubstr([]string{"/models", "/assistants", "/threads", "/files"}, suffix) {
 			return fmt.Sprintf("%s/%s%s?api-version=%s", baseURL, azureAPIPrefix, suffix, c.config.APIVersion)
 		}
 		azureDeploymentName := "UNKNOWN"
@@ -143,26 +298,6 @@ func (c *Client) fullURL(suffix string, args ...any) string {
 	return fmt.Sprintf("%s%s", c.config.BaseURL, suffix)
 }
 
-func (c *Client) newStreamRequest(
-	ctx context.Context,
-	method string,
-	urlSuffix string,
-	body any,
-	model string) (*http.Request, error) {
-	req, err := c.requestBuilder.Build(ctx, method, c.fullURL(urlSuffix, model), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	req.Header.Set("Connection", "keep-alive")
-
-	c.setCommonHeaders(req)
-	return req, nil
-}
-
 func (c *Client) handleErrorResp(resp *http.Response) error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -177,16 +312,25 @@ func (c *Client) handleErrorResp(resp *http.Response) error {
 	if err != nil {
 		return &RequestError{
 			HTTPStatusCode: resp.StatusCode,
-			Err:            fmt.Errorf("decode body as json err: %v, body: %s", err, body),
+			Err:            fmt.Errorf("decode response err: %v, body: %s", err, body),
 		}
 	}
 	if errRes.Error == nil {
 		return &RequestError{
 			HTTPStatusCode: resp.StatusCode,
-			Err:            fmt.Errorf("no error data in response body: %s", body),
+			Err:            nil,
 		}
 	}
 
 	errRes.Error.HTTPStatusCode = resp.StatusCode
 	return errRes.Error
+}
+
+func containsSubstr(s []string, e string) bool {
+	for _, v := range s {
+		if strings.Contains(e, v) {
+			return true
+		}
+	}
+	return false
 }
